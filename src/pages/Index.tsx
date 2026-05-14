@@ -1,22 +1,33 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
 
+const VOTES_URL = "https://functions.poehali.dev/2226445f-ee55-4e2d-b2ac-c981f87bd7b2";
+
 const COUNTRIES = [
-  { id: "malta", name: "Мальта", flag: "🇲🇹", artist: "Mirabel", song: "Golden Shore", color: "#CF0A2C" },
-  { id: "croatia", name: "Хорватия", flag: "🇭🇷", artist: "Luka Vukić", song: "Rim Tim Tagi Dim", color: "#FF0000" },
-  { id: "armenia", name: "Армения", flag: "🇦🇲", artist: "Parg", song: "Survivor", color: "#D90012" },
-  { id: "cyprus", name: "Кипр", flag: "🇨🇾", artist: "Theo Evan", song: "Midnight Blue", color: "#003680" },
-  { id: "bulgaria", name: "Болгария", flag: "🇧🇬", artist: "ALMA", song: "Vivaldi", color: "#00966E" },
-  { id: "albania", name: "Албания", flag: "🇦🇱", artist: "Muharrem Ahmeti", song: "Zjarm", color: "#E41E20" },
-  { id: "norway", name: "Норвегия", flag: "🇳🇴", artist: "Kyle Alessandro", song: "Lighter", color: "#EF2B2D" },
-  { id: "israel", name: "Израиль", flag: "🇮🇱", artist: "Yuval Raphael", song: "New Day Will Rise", color: "#0038B8" },
+  { id: "malta",    name: "Мальта",    flag: "🇲🇹" },
+  { id: "croatia",  name: "Хорватия",  flag: "🇭🇷" },
+  { id: "armenia",  name: "Армения",   flag: "🇦🇲" },
+  { id: "cyprus",   name: "Кипр",      flag: "🇨🇾" },
+  { id: "bulgaria", name: "Болгария",  flag: "🇧🇬" },
+  { id: "albania",  name: "Албания",   flag: "🇦🇱" },
+  { id: "norway",   name: "Норвегия",  flag: "🇳🇴" },
+  { id: "israel",   name: "Израиль",   flag: "🇮🇱" },
 ];
 
-const VOTE_START = new Date("2026-05-14T20:00:00");
-const VOTE_END = new Date("2026-05-16T15:00:00");
+const VOTE_START  = new Date("2026-05-14T20:00:00");
+const VOTE_END    = new Date("2026-05-16T15:00:00");
 const RESULTS_OPEN = new Date("2026-05-18T00:00:00");
 const SECRET_CODE = "2013";
 const MAX_VOTES_PER_COUNTRY = 3;
+
+function getVoterId(): string {
+  let id = localStorage.getItem("av2026_voter_id");
+  if (!id) {
+    id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem("av2026_voter_id", id);
+  }
+  return id;
+}
 
 type Section = "vote" | "results" | "rules" | "participants";
 
@@ -28,20 +39,21 @@ function useCountdown(target: Date) {
   }, [target]);
   if (diff <= 0) return null;
   const total = Math.max(0, diff);
-  const d = Math.floor(total / 86400000);
-  const h = Math.floor((total % 86400000) / 3600000);
-  const m = Math.floor((total % 3600000) / 60000);
-  const s = Math.floor((total % 60000) / 1000);
-  return { d, h, m, s };
+  return {
+    d: Math.floor(total / 86400000),
+    h: Math.floor((total % 86400000) / 3600000),
+    m: Math.floor((total % 3600000) / 60000),
+    s: Math.floor((total % 60000) / 1000),
+  };
 }
 
 function CountdownUnit({ value, label }: { value: number; label: string }) {
   return (
     <div className="flex flex-col items-center min-w-[48px]">
-      <div className="font-display text-4xl md:text-5xl font-bold tabular-nums" style={{ color: "var(--av-white)" }}>
+      <div className="font-display text-4xl md:text-5xl font-bold tabular-nums" style={{ color: "#fff" }}>
         {String(value).padStart(2, "0")}
       </div>
-      <div className="text-xs uppercase tracking-widest mt-1" style={{ color: "var(--av-gray)" }}>
+      <div className="text-xs uppercase tracking-widest mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>
         {label}
       </div>
     </div>
@@ -49,181 +61,228 @@ function CountdownUnit({ value, label }: { value: number; label: string }) {
 }
 
 function ProgressBar({ value, max }: { value: number; max: number }) {
-  const pct = max === 0 ? 0 : Math.round((value / max) * 100);
+  const pct = max === 0 ? 0 : Math.min(100, Math.round((value / max) * 100));
   return (
-    <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: "var(--av-border)" }}>
-      <div className="progress-fill" style={{ width: `${pct}%` }} />
+    <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.1)" }}>
+      <div className="h-full rounded-full transition-all duration-700"
+        style={{ width: `${pct}%`, background: "linear-gradient(90deg, #c084fc, #818cf8, #38bdf8)" }} />
     </div>
   );
 }
 
-function ResultsView({ votes }: { votes: Record<string, number> }) {
-  const total = Object.values(votes).reduce((a, b) => a + b, 0) || 1;
-  const sorted = [...COUNTRIES].sort((a, b) => (votes[b.id] || 0) - (votes[a.id] || 0));
+function SectionHeader({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div className="mb-8">
+      <h2 className="font-display font-black text-3xl md:text-4xl uppercase euro-text">{title}</h2>
+      <p className="mt-2 text-sm" style={{ color: "rgba(255,255,255,0.45)" }}>{sub}</p>
+    </div>
+  );
+}
+
+function LoadingSpinner() {
+  return (
+    <div className="flex justify-center py-16">
+      <div className="w-10 h-10 rounded-full border-2"
+        style={{ borderColor: "rgba(192,132,252,0.2)", borderTopColor: "#c084fc", animation: "spin-loader 0.8s linear infinite" }} />
+    </div>
+  );
+}
+
+function ResultsView({ globalTotals }: { globalTotals: Record<string, number> }) {
+  const maxVotes = Math.max(...COUNTRIES.map((c) => globalTotals[c.id] || 0), 1);
+  const totalAll = Object.values(globalTotals).reduce((a, b) => a + b, 0);
+  const sorted = [...COUNTRIES].sort((a, b) => (globalTotals[b.id] || 0) - (globalTotals[a.id] || 0));
 
   return (
-    <div className="space-y-3">
-      {sorted.map((country, i) => {
-        const count = votes[country.id] || 0;
-        const pct = Math.round((count / total) * 100);
-        const isFirst = i === 0 && count > 0;
-        return (
-          <div
-            key={country.id}
-            className="rounded-sm border p-4 animate-slide-in"
-            style={{
-              background: "var(--av-card)",
-              borderColor: isFirst ? "rgba(232,16,42,0.4)" : "var(--av-border)",
-              animationDelay: `${i * 0.06}s`,
-              opacity: 0,
-              animationFillMode: "forwards",
-            }}
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div
-                className="w-7 h-7 flex items-center justify-center rounded-sm font-display font-bold text-sm flex-shrink-0"
-                style={{
-                  background: isFirst ? "var(--av-red)" : "var(--av-border)",
-                  color: isFirst ? "#fff" : "var(--av-gray)",
-                }}
-              >
-                {i + 1}
-              </div>
-              <span style={{ fontSize: 24 }}>{country.flag}</span>
-              <div className="flex-1 min-w-0">
-                <div className="font-heading font-bold text-sm" style={{ color: "var(--av-white)" }}>
-                  {country.name}
+    <div>
+      <div className="mb-6 px-5 py-3 rounded-xl inline-flex items-center gap-3"
+        style={{ background: "rgba(192,132,252,0.1)", border: "1px solid rgba(192,132,252,0.3)" }}>
+        <Icon name="Users" size={16} style={{ color: "#c084fc" } as React.CSSProperties} />
+        <span className="font-heading font-semibold text-sm" style={{ color: "#e9d5ff" }}>
+          Суммарно голосов:{" "}
+          <span style={{ color: "#fff", fontWeight: 700 }}>{totalAll}</span>
+        </span>
+      </div>
+
+      <div className="space-y-3">
+        {sorted.map((country, i) => {
+          const count = globalTotals[country.id] || 0;
+          const pct = totalAll === 0 ? 0 : Math.round((count / totalAll) * 100);
+          const isFirst = i === 0 && count > 0;
+          return (
+            <div key={country.id} className="rounded-2xl border p-4 animate-slide-in"
+              style={{
+                background: isFirst ? "linear-gradient(135deg, rgba(192,132,252,0.1), rgba(56,189,248,0.06))" : "rgba(255,255,255,0.04)",
+                borderColor: isFirst ? "rgba(192,132,252,0.4)" : "rgba(255,255,255,0.08)",
+                animationDelay: `${i * 0.06}s`, opacity: 0, animationFillMode: "forwards",
+              }}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-8 h-8 flex items-center justify-center rounded-lg font-display font-bold text-sm flex-shrink-0"
+                  style={{
+                    background: isFirst ? "linear-gradient(135deg, #c084fc, #38bdf8)" : "rgba(255,255,255,0.08)",
+                    color: isFirst ? "#fff" : "rgba(255,255,255,0.35)",
+                  }}>
+                  {i + 1}
                 </div>
-                <div className="text-xs" style={{ color: "var(--av-gray)" }}>{country.artist}</div>
-              </div>
-              <div className="text-right flex-shrink-0">
-                <div className="font-display font-bold text-lg" style={{ color: count > 0 ? "var(--av-white)" : "var(--av-gray)" }}>
-                  {count}
+                <span style={{ fontSize: 26 }}>{country.flag}</span>
+                <div className="flex-1">
+                  <div className="font-heading font-bold text-base" style={{ color: "#fff" }}>{country.name}</div>
                 </div>
-                <div className="text-xs" style={{ color: "var(--av-gray)" }}>{pct}%</div>
+                <div className="text-right flex-shrink-0">
+                  <div className="font-display font-bold text-xl" style={{ color: count > 0 ? "#fff" : "rgba(255,255,255,0.25)" }}>
+                    {count}
+                  </div>
+                  <div className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>{pct}%</div>
+                </div>
               </div>
+              <ProgressBar value={count} max={maxVotes} />
             </div>
-            <ProgressBar value={count} max={MAX_VOTES_PER_COUNTRY} />
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 export default function Index() {
   const [section, setSection] = useState<Section>("vote");
-  const [votes, setVotes] = useState<Record<string, number>>(() => {
-    try {
-      const stored = localStorage.getItem("av2026_votes");
-      return stored ? JSON.parse(stored) : {};
-    } catch {
-      return {};
-    }
+  const [myVotes, setMyVotes] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem("av2026_votes") || "{}"); } catch { return {}; }
   });
+  const [globalTotals, setGlobalTotals] = useState<Record<string, number>>({});
+  const [loadingTotals, setLoadingTotals] = useState(false);
   const [justVoted, setJustVoted] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [codeUnlocked, setCodeUnlocked] = useState(false);
   const [codeError, setCodeError] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [savingVotes, setSavingVotes] = useState(false);
 
   const now = new Date();
   const isVotingActive = now >= VOTE_START && now <= VOTE_END;
-  const isVotingOver = now > VOTE_END;
-  const isResultsOpen = now >= RESULTS_OPEN;
-
+  const isVotingOver   = now > VOTE_END;
+  const isResultsOpen  = now >= RESULTS_OPEN;
   const countdownTarget = now < VOTE_START ? VOTE_START : VOTE_END;
   const countdown = useCountdown(countdownTarget);
 
-  const totalVotes = Object.values(votes).reduce((a, b) => a + b, 0);
-  const maxVotes = COUNTRIES.length * MAX_VOTES_PER_COUNTRY;
+  const fetchTotals = useCallback(async () => {
+    setLoadingTotals(true);
+    try {
+      const res = await fetch(VOTES_URL);
+      const data = await res.json();
+      setGlobalTotals(data.totals || {});
+    } catch { /* silent */ } finally {
+      setLoadingTotals(false);
+    }
+  }, []);
 
+  useEffect(() => { if (section === "results") fetchTotals(); }, [section, fetchTotals]);
   useEffect(() => {
-    localStorage.setItem("av2026_votes", JSON.stringify(votes));
-  }, [votes]);
+    if (section !== "results") return;
+    const id = setInterval(fetchTotals, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [section, fetchTotals]);
+
+  const saveVotesToServer = useCallback(async (votes: Record<string, number>) => {
+    setSavingVotes(true);
+    try {
+      await fetch(VOTES_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voter_id: getVoterId(), votes }),
+      });
+    } catch { /* silent */ } finally { setSavingVotes(false); }
+  }, []);
 
   const handleVote = (countryId: string) => {
     if (!isVotingActive) return;
-    const current = votes[countryId] || 0;
+    const current = myVotes[countryId] || 0;
     if (current >= MAX_VOTES_PER_COUNTRY) return;
-    setVotes((v) => ({ ...v, [countryId]: current + 1 }));
+    const newVotes = { ...myVotes, [countryId]: current + 1 };
+    setMyVotes(newVotes);
+    localStorage.setItem("av2026_votes", JSON.stringify(newVotes));
     setJustVoted(countryId);
     setTimeout(() => setJustVoted(null), 1200);
+    saveVotesToServer(newVotes);
   };
 
   const handleCodeSubmit = () => {
-    if (code === SECRET_CODE) {
-      setCodeUnlocked(true);
-      setCodeError(false);
-    } else {
-      setCodeError(true);
-      setTimeout(() => setCodeError(false), 1500);
-    }
+    if (code === SECRET_CODE) { setCodeUnlocked(true); setCodeError(false); fetchTotals(); }
+    else { setCodeError(true); setTimeout(() => setCodeError(false), 1500); }
   };
 
+  const totalMyVotes = Object.values(myVotes).reduce((a, b) => a + b, 0);
+  const maxMyVotes = COUNTRIES.length * MAX_VOTES_PER_COUNTRY;
+
   const navItems: { key: Section; label: string; icon: string }[] = [
-    { key: "vote", label: "Голосование", icon: "Vote" },
-    { key: "results", label: "Результаты", icon: "BarChart3" },
-    { key: "participants", label: "Участники", icon: "Users" },
-    { key: "rules", label: "Правила", icon: "BookOpen" },
+    { key: "vote",         label: "Голосование", icon: "Vote"     },
+    { key: "results",      label: "Результаты",  icon: "BarChart3" },
+    { key: "participants", label: "Участники",   icon: "Users"    },
+    { key: "rules",        label: "Правила",     icon: "BookOpen" },
   ];
 
   return (
-    <div className="min-h-screen relative z-10" style={{ color: "var(--av-white)" }}>
+    <div className="min-h-screen relative" style={{ color: "#fff" }}>
+
+      {/* ── ФОН ЕВРОВИДЕНИЕ ── */}
+      <div className="fixed inset-0 pointer-events-none" style={{ zIndex: 0 }}>
+        <div className="absolute inset-0" style={{
+          background: "linear-gradient(135deg, #07001a 0%, #0d0030 35%, #010a1a 65%, #07001a 100%)"
+        }} />
+        <div className="absolute" style={{ top: "-20%", left: "-15%", width: "65%", height: "65%",
+          background: "radial-gradient(ellipse, rgba(192,132,252,0.2) 0%, transparent 70%)", filter: "blur(50px)" }} />
+        <div className="absolute" style={{ bottom: "-15%", right: "-10%", width: "60%", height: "60%",
+          background: "radial-gradient(ellipse, rgba(56,189,248,0.18) 0%, transparent 70%)", filter: "blur(50px)" }} />
+        <div className="absolute" style={{ top: "35%", left: "45%", width: "45%", height: "45%",
+          background: "radial-gradient(ellipse, rgba(236,72,153,0.1) 0%, transparent 70%)", filter: "blur(70px)", transform: "translateX(-50%)" }} />
+        {Array.from({ length: 70 }).map((_, i) => (
+          <div key={i} className="absolute rounded-full" style={{
+            width: Math.random() * 2 + 0.5, height: Math.random() * 2 + 0.5,
+            left: `${Math.random() * 100}%`, top: `${Math.random() * 100}%`,
+            background: "#fff", opacity: Math.random() * 0.5 + 0.1,
+            animation: `star-pulse ${Math.random() * 3 + 2}s ease-in-out infinite`,
+            animationDelay: `${Math.random() * 4}s`,
+          }} />
+        ))}
+      </div>
 
       {/* ── HEADER ── */}
-      <header
-        className="sticky top-0 z-50 border-b backdrop-blur-md"
-        style={{ background: "rgba(10,10,10,0.92)", borderColor: "var(--av-border)" }}
-      >
+      <header className="sticky top-0 z-50 border-b backdrop-blur-xl"
+        style={{ background: "rgba(7,0,26,0.88)", borderColor: "rgba(192,132,252,0.2)" }}>
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-sm flex items-center justify-center font-display font-bold text-sm"
-              style={{ background: "var(--av-red)", color: "#fff" }}
-            >
-              AV
-            </div>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center font-display font-black text-sm"
+              style={{ background: "linear-gradient(135deg, #c084fc, #38bdf8)", color: "#fff" }}>AV</div>
             <div>
-              <div className="font-display font-bold text-base leading-none" style={{ color: "var(--av-white)" }}>AURAVISION</div>
-              <div className="text-xs" style={{ color: "var(--av-gray)" }}>2026</div>
+              <div className="font-display font-black text-base leading-none euro-text">AURAVISION</div>
+              <div className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>2026 · ФИНАЛ</div>
             </div>
           </div>
 
-          <nav className="hidden md:flex items-center gap-8">
-            {navItems.map((item) => (
-              <button
-                key={item.key}
-                onClick={() => setSection(item.key)}
-                className={`nav-link font-heading font-semibold text-sm uppercase tracking-wider ${section === item.key ? "active" : ""}`}
-                style={{ color: section === item.key ? "var(--av-white)" : "var(--av-gray)" }}
-              >
+          <nav className="hidden md:flex items-center gap-6">
+            {navItems.map(item => (
+              <button key={item.key} onClick={() => setSection(item.key)}
+                className="nav-euro font-heading font-semibold text-sm uppercase tracking-wider transition-colors duration-200"
+                style={{ color: section === item.key ? "#fff" : "rgba(255,255,255,0.45)" }}
+                data-active={section === item.key}>
                 {item.label}
               </button>
             ))}
           </nav>
 
-          <button
-            className="md:hidden p-2"
-            onClick={() => setMobileMenuOpen((v) => !v)}
-            style={{ color: "var(--av-gray)" }}
-          >
+          <button className="md:hidden p-2" onClick={() => setMobileMenuOpen(v => !v)}
+            style={{ color: "rgba(255,255,255,0.55)" }}>
             <Icon name={mobileMenuOpen ? "X" : "Menu"} size={22} />
           </button>
         </div>
 
         {mobileMenuOpen && (
-          <div
-            className="md:hidden border-t animate-fade-in"
-            style={{ borderColor: "var(--av-border)", background: "rgba(10,10,10,0.98)" }}
-          >
-            {navItems.map((item) => (
-              <button
-                key={item.key}
-                onClick={() => { setSection(item.key); setMobileMenuOpen(false); }}
+          <div className="md:hidden border-t animate-fade-in"
+            style={{ borderColor: "rgba(192,132,252,0.12)", background: "rgba(7,0,26,0.97)" }}>
+            {navItems.map(item => (
+              <button key={item.key} onClick={() => { setSection(item.key); setMobileMenuOpen(false); }}
                 className="w-full text-left px-6 py-4 font-heading font-semibold text-sm uppercase tracking-wider border-b flex items-center gap-3"
-                style={{ borderColor: "var(--av-border)", color: section === item.key ? "var(--av-red)" : "var(--av-gray)" }}
-              >
+                style={{ borderColor: "rgba(255,255,255,0.06)", color: section === item.key ? "#c084fc" : "rgba(255,255,255,0.45)" }}>
                 <Icon name={item.icon} size={16} />
                 {item.label}
               </button>
@@ -233,163 +292,146 @@ export default function Index() {
       </header>
 
       {/* ── HERO ── */}
-      <section className="relative overflow-hidden border-b" style={{ borderColor: "var(--av-border)" }}>
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{ background: "radial-gradient(ellipse at 50% 0%, rgba(232,16,42,0.12) 0%, transparent 70%)" }}
-        />
-
-        <div className="max-w-6xl mx-auto px-4 py-16 md:py-24 text-center relative">
+      <section className="relative z-10 border-b" style={{ borderColor: "rgba(192,132,252,0.12)" }}>
+        <div className="max-w-6xl mx-auto px-4 py-12 md:py-18 text-center">
           <div className="animate-fade-in">
-            <div className="av-tag mx-auto mb-6 w-fit">
-              <span className="dot" />
+            {/* Live badge */}
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-6 text-xs font-heading font-bold uppercase tracking-widest"
+              style={{ background: "rgba(192,132,252,0.1)", border: "1px solid rgba(192,132,252,0.3)", color: "#c084fc" }}>
+              <span className="w-2 h-2 rounded-full" style={{ background: "#c084fc", display: "inline-block", animation: "dot-pulse 1.5s ease-in-out infinite" }} />
               {isVotingActive ? "Голосование открыто" : isVotingOver ? "Голосование завершено" : "Скоро старт"}
             </div>
 
-            <h1
-              className="font-display font-black uppercase leading-none mb-4"
-              style={{ fontSize: "clamp(3rem, 10vw, 7rem)", letterSpacing: "-0.02em" }}
-            >
-              <span className="gradient-text">AURA</span>
-              <span style={{ color: "var(--av-white)" }}>VISION</span>
+            {/* Main title */}
+            <h1 className="font-display font-black uppercase leading-none mb-3"
+              style={{ fontSize: "clamp(3.5rem, 11vw, 8rem)", letterSpacing: "-0.03em" }}>
+              <span className="euro-text">AURA</span>
+              <span style={{ color: "#fff" }}>VISION</span>
             </h1>
-
-            <div className="font-heading font-semibold text-lg md:text-xl mb-10" style={{ color: "var(--av-gray)" }}>
-              Музыкальный конкурс · Финал 2026
+            <div className="font-heading font-medium text-base md:text-lg mb-10"
+              style={{ color: "rgba(255,255,255,0.45)", letterSpacing: "0.15em" }}>
+              МУЗЫКАЛЬНЫЙ КОНКУРС · ФИНАЛ 2026
             </div>
 
+            {/* VIDEO */}
+            <div className="max-w-3xl mx-auto mb-10 rounded-2xl overflow-hidden animate-fade-in delay-200"
+              style={{ border: "1px solid rgba(192,132,252,0.25)", boxShadow: "0 0 80px rgba(192,132,252,0.18), 0 0 30px rgba(56,189,248,0.12)" }}>
+              <div style={{ position: "relative", paddingBottom: "56.25%", height: 0 }}>
+                <iframe
+                  src="https://www.youtube.com/embed/R0YFL8jc6ao"
+                  title="AuraVision 2026 Final"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+                />
+              </div>
+            </div>
+
+            {/* Countdown */}
             {countdown && !isVotingOver && (
-              <div
-                className="inline-flex items-center gap-3 md:gap-5 px-6 md:px-10 py-5 rounded-sm border animate-fade-in delay-300"
-                style={{ background: "rgba(255,255,255,0.03)", borderColor: "var(--av-border)" }}
-              >
-                <div className="text-xs uppercase tracking-widest" style={{ color: "var(--av-gray)" }}>
+              <div className="inline-flex items-center gap-3 md:gap-5 px-6 md:px-10 py-5 rounded-2xl border mb-8 animate-fade-in delay-300"
+                style={{ background: "rgba(255,255,255,0.03)", borderColor: "rgba(192,132,252,0.2)" }}>
+                <div className="text-xs uppercase tracking-widest hidden sm:block" style={{ color: "rgba(255,255,255,0.38)" }}>
                   {now < VOTE_START ? "До старта" : "До конца"}
                 </div>
-                <div className="w-px h-8 opacity-20" style={{ background: "var(--av-white)" }} />
+                <div className="hidden sm:block w-px h-8 opacity-15" style={{ background: "#fff" }} />
                 <CountdownUnit value={countdown.d} label="дней" />
-                <span className="font-display text-2xl font-bold pb-3" style={{ color: "var(--av-red)" }}>:</span>
+                <span className="font-display text-2xl font-bold" style={{ color: "#c084fc", marginBottom: "1.2rem" }}>:</span>
                 <CountdownUnit value={countdown.h} label="часов" />
-                <span className="font-display text-2xl font-bold pb-3" style={{ color: "var(--av-red)" }}>:</span>
+                <span className="font-display text-2xl font-bold" style={{ color: "#c084fc", marginBottom: "1.2rem" }}>:</span>
                 <CountdownUnit value={countdown.m} label="минут" />
-                <span className="font-display text-2xl font-bold pb-3" style={{ color: "var(--av-red)" }}>:</span>
+                <span className="font-display text-2xl font-bold" style={{ color: "#c084fc", marginBottom: "1.2rem" }}>:</span>
                 <CountdownUnit value={countdown.s} label="секунд" />
               </div>
             )}
 
-            <div className="mt-8 max-w-sm mx-auto text-left animate-fade-in delay-400">
-              <div className="flex justify-between text-xs mb-2" style={{ color: "var(--av-gray)" }}>
+            {/* My votes progress */}
+            <div className="max-w-sm mx-auto text-left animate-fade-in delay-400">
+              <div className="flex justify-between text-xs mb-2" style={{ color: "rgba(255,255,255,0.38)" }}>
                 <span>Ваших голосов отдано</span>
-                <span style={{ color: "var(--av-white)" }}>{totalVotes} / {maxVotes}</span>
+                <span style={{ color: "#fff" }}>{totalMyVotes} / {maxMyVotes}</span>
               </div>
-              <ProgressBar value={totalVotes} max={maxVotes} />
+              <ProgressBar value={totalMyVotes} max={maxMyVotes} />
             </div>
           </div>
         </div>
       </section>
 
       {/* ── MAIN ── */}
-      <main className="max-w-6xl mx-auto px-4 py-12">
+      <main className="max-w-6xl mx-auto px-4 py-12 relative z-10">
 
         {/* ГОЛОСОВАНИЕ */}
         {section === "vote" && (
           <div className="animate-fade-in">
-            <div className="mb-8">
-              <h2 className="font-display font-bold text-3xl uppercase section-line" style={{ color: "var(--av-white)" }}>
-                Голосование
-              </h2>
-              <p className="mt-3 text-sm" style={{ color: "var(--av-gray)" }}>
-                До 3 голосов за каждую страну ·{" "}
-                {isVotingActive ? "Голосование открыто" : isVotingOver ? "Голосование завершено" : "Откроется 14 мая в 20:00"}
-              </p>
-            </div>
+            <SectionHeader title="Голосование"
+              sub={isVotingActive ? "До 3 голосов за страну · Голосование открыто"
+                : isVotingOver ? "Голосование завершено · Итоги 18 мая"
+                : "Старт: 14 мая 2026 в 20:00"} />
 
-            {!isVotingActive && !isVotingOver && (
-              <div className="rounded-sm border p-6 mb-8 text-center"
-                style={{ borderColor: "rgba(232,16,42,0.3)", background: "rgba(232,16,42,0.05)" }}>
-                <Icon name="Clock" size={32} className="mx-auto mb-3" style={{ color: "var(--av-red)" } as React.CSSProperties} />
-                <div className="font-heading font-semibold text-base mb-1">Голосование ещё не началось</div>
-                <div className="text-sm" style={{ color: "var(--av-gray)" }}>Старт: 14 мая 2026 в 20:00</div>
+            {!isVotingActive && (
+              <div className="rounded-2xl border p-6 mb-8 text-center"
+                style={{ borderColor: "rgba(192,132,252,0.2)", background: "rgba(192,132,252,0.05)" }}>
+                <Icon name={isVotingOver ? "CheckCircle" : "Clock"} size={32} className="mx-auto mb-3"
+                  style={{ color: "#c084fc" } as React.CSSProperties} />
+                <div className="font-heading font-semibold text-base mb-1">
+                  {isVotingOver ? "Голосование завершено" : "Голосование ещё не началось"}
+                </div>
+                <div className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
+                  {isVotingOver ? "Итоги откроются 18 мая 2026" : "Старт: 14 мая 2026 в 20:00"}
+                </div>
               </div>
             )}
 
-            {isVotingOver && (
-              <div className="rounded-sm border p-6 mb-8 text-center"
-                style={{ borderColor: "rgba(232,16,42,0.3)", background: "rgba(232,16,42,0.05)" }}>
-                <Icon name="CheckCircle" size={32} className="mx-auto mb-3" style={{ color: "var(--av-red)" } as React.CSSProperties} />
-                <div className="font-heading font-semibold text-base mb-1">Голосование завершено</div>
-                <div className="text-sm" style={{ color: "var(--av-gray)" }}>Результаты будут открыты 18 мая 2026</div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {COUNTRIES.map((country, i) => {
-                const voteCount = votes[country.id] || 0;
+                const voteCount = myVotes[country.id] || 0;
                 const canVote = isVotingActive && voteCount < MAX_VOTES_PER_COUNTRY;
                 const isJust = justVoted === country.id;
-
                 return (
-                  <div
-                    key={country.id}
-                    className="country-card rounded-sm p-5 flex flex-col gap-4 animate-fade-in"
+                  <div key={country.id} className="animate-fade-in rounded-2xl p-5 flex flex-col gap-4"
                     style={{
-                      background: "var(--av-card)",
-                      animationDelay: `${i * 0.07}s`,
-                      opacity: 0,
-                      animationFillMode: "forwards",
-                    }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span style={{ fontSize: 36 }}>{country.flag}</span>
-                      <div>
-                        <div className="font-heading font-bold text-base" style={{ color: "var(--av-white)" }}>{country.name}</div>
-                        <div className="text-xs" style={{ color: "var(--av-gray)" }}>{country.artist}</div>
+                      background: voteCount > 0 ? "rgba(192,132,252,0.07)" : "rgba(255,255,255,0.04)",
+                      border: `1px solid ${voteCount > 0 ? "rgba(192,132,252,0.3)" : "rgba(255,255,255,0.08)"}`,
+                      animationDelay: `${i * 0.07}s`, opacity: 0, animationFillMode: "forwards",
+                      transition: "border-color 0.25s, background 0.25s",
+                    }}>
+                    <div className="flex flex-col items-center gap-2 text-center">
+                      <span style={{ fontSize: 44, lineHeight: 1 }}>{country.flag}</span>
+                      <div className="font-display font-bold text-lg uppercase" style={{ color: "#fff" }}>
+                        {country.name}
                       </div>
                     </div>
 
-                    <div className="text-xs px-3 py-2 rounded-sm" style={{ background: "rgba(255,255,255,0.04)", color: "var(--av-gray)" }}>
-                      ♪ {country.song}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {[0, 1, 2].map((dot) => (
-                        <div
-                          key={dot}
-                          className="flex-1 h-1.5 rounded-full transition-all duration-300"
-                          style={{ background: dot < voteCount ? "var(--av-red)" : "var(--av-border)" }}
-                        />
+                    {/* Dots */}
+                    <div className="flex items-center gap-1.5 justify-center">
+                      {[0, 1, 2].map(dot => (
+                        <div key={dot} className="flex-1 h-1.5 rounded-full transition-all duration-300"
+                          style={{ background: dot < voteCount ? "linear-gradient(90deg, #c084fc, #38bdf8)" : "rgba(255,255,255,0.1)" }} />
                       ))}
-                      <span className="text-xs ml-1 font-heading font-semibold"
-                        style={{ color: voteCount > 0 ? "var(--av-red)" : "var(--av-gray)" }}>
+                      <span className="text-xs ml-1.5 font-heading font-bold"
+                        style={{ color: voteCount > 0 ? "#c084fc" : "rgba(255,255,255,0.3)" }}>
                         {voteCount}/3
                       </span>
                     </div>
 
-                    <button
-                      onClick={() => handleVote(country.id)}
-                      disabled={!canVote}
-                      className={`vote-btn w-full py-2.5 px-4 rounded-sm font-heading font-bold text-sm uppercase tracking-wider transition-all ${isJust ? "scale-95" : ""}`}
+                    <button onClick={() => handleVote(country.id)} disabled={!canVote}
+                      className={`w-full py-2.5 rounded-xl font-heading font-bold text-sm uppercase tracking-wider transition-all duration-200 ${isJust ? "scale-95" : ""}`}
                       style={{
-                        background: canVote ? (isJust ? "var(--av-red-dim)" : "var(--av-red)") : "var(--av-border)",
-                        color: canVote ? "#fff" : "var(--av-gray)",
+                        background: canVote
+                          ? "linear-gradient(135deg, #c084fc, #818cf8, #38bdf8)"
+                          : "rgba(255,255,255,0.07)",
+                        color: canVote ? "#fff" : "rgba(255,255,255,0.3)",
                         cursor: canVote ? "pointer" : "not-allowed",
-                      }}
-                    >
-                      {isJust ? "✓ Голос принят!" : voteCount >= MAX_VOTES_PER_COUNTRY ? "Лимит исчерпан" : "Голосовать"}
+                        boxShadow: canVote && !isJust ? "0 4px 20px rgba(192,132,252,0.3)" : "none",
+                      }}>
+                      {isJust ? "✓ Принято!" : voteCount >= MAX_VOTES_PER_COUNTRY ? "Лимит" : "+1 голос"}
                     </button>
                   </div>
                 );
               })}
             </div>
-
-            {totalVotes > 0 && (
-              <div className="mt-8 text-center">
-                <p className="text-sm" style={{ color: "var(--av-gray)" }}>
-                  Вы отдали{" "}
-                  <span className="font-bold" style={{ color: "var(--av-white)" }}>{totalVotes}</span>{" "}
-                  из {maxVotes} возможных голосов
-                </p>
-              </div>
+            {savingVotes && (
+              <div className="mt-4 text-center text-xs" style={{ color: "rgba(192,132,252,0.6)" }}>Сохраняю...</div>
             )}
           </div>
         )}
@@ -397,77 +439,56 @@ export default function Index() {
         {/* РЕЗУЛЬТАТЫ */}
         {section === "results" && (
           <div className="animate-fade-in">
-            <div className="mb-8">
-              <h2 className="font-display font-bold text-3xl uppercase section-line" style={{ color: "var(--av-white)" }}>
-                Результаты
-              </h2>
-              <p className="mt-3 text-sm" style={{ color: "var(--av-gray)" }}>
-                Промежуточные данные · Открытые итоги с 18 мая 2026
-              </p>
-            </div>
+            <SectionHeader title="Результаты" sub="Суммарные голоса всех участников · обновление каждые 5 мин" />
 
             {isResultsOpen ? (
-              <ResultsView votes={votes} />
+              loadingTotals ? <LoadingSpinner /> : <ResultsView globalTotals={globalTotals} />
             ) : (
               <div className="max-w-md mx-auto">
-                <div className="rounded-sm border p-8 text-center mb-6"
-                  style={{ borderColor: "var(--av-border)", background: "var(--av-card)" }}>
-                  <div
-                    className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
-                    style={{ background: "rgba(232,16,42,0.1)", border: "1px solid rgba(232,16,42,0.3)" }}
-                  >
-                    <Icon name="Lock" size={28} style={{ color: "var(--av-red)" } as React.CSSProperties} />
+                <div className="rounded-2xl border p-8 text-center mb-4"
+                  style={{ borderColor: "rgba(192,132,252,0.2)", background: "rgba(255,255,255,0.04)" }}>
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
+                    style={{ background: "rgba(192,132,252,0.1)", border: "1px solid rgba(192,132,252,0.3)" }}>
+                    <Icon name="Lock" size={28} style={{ color: "#c084fc" } as React.CSSProperties} />
                   </div>
-                  <div className="font-heading font-bold text-xl mb-2" style={{ color: "var(--av-white)" }}>
-                    Результаты засекречены
-                  </div>
-                  <div className="text-sm mb-6" style={{ color: "var(--av-gray)" }}>
+                  <div className="font-heading font-bold text-xl mb-2">Результаты засекречены</div>
+                  <div className="text-sm mb-6" style={{ color: "rgba(255,255,255,0.4)" }}>
                     Открытый доступ с 18 мая 2026.<br />Промежуточные данные — по секретному коду.
                   </div>
-
                   {!codeUnlocked && (
                     <div className="space-y-3">
-                      <input
-                        type="password"
-                        placeholder="Введите секретный код"
-                        value={code}
-                        onChange={(e) => setCode(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleCodeSubmit()}
-                        className="w-full px-4 py-3 rounded-sm text-center font-heading font-bold text-lg tracking-widest outline-none transition-all"
+                      <input type="password" placeholder="Секретный код" value={code}
+                        onChange={e => setCode(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && handleCodeSubmit()}
+                        className="w-full px-4 py-3 rounded-xl text-center font-heading font-bold text-xl tracking-widest outline-none"
                         style={{
-                          background: "rgba(255,255,255,0.05)",
-                          border: `1px solid ${codeError ? "#E8102A" : "var(--av-border)"}`,
-                          color: "var(--av-white)",
-                        }}
-                      />
-                      {codeError && (
-                        <p className="text-xs animate-fade-in-fast" style={{ color: "var(--av-red)" }}>
-                          Неверный код. Попробуйте снова.
-                        </p>
-                      )}
-                      <button
-                        onClick={handleCodeSubmit}
-                        className="vote-btn w-full py-3 rounded-sm font-heading font-bold text-sm uppercase tracking-wider"
-                        style={{ background: "var(--av-red)", color: "#fff" }}
-                      >
+                          background: "rgba(255,255,255,0.06)",
+                          border: `1px solid ${codeError ? "#f472b6" : "rgba(192,132,252,0.25)"}`,
+                          color: "#fff", transition: "border-color 0.2s",
+                        }} />
+                      {codeError && <p className="text-xs" style={{ color: "#f472b6" }}>Неверный код</p>}
+                      <button onClick={handleCodeSubmit}
+                        className="w-full py-3 rounded-xl font-heading font-bold text-sm uppercase tracking-wider"
+                        style={{ background: "linear-gradient(135deg, #c084fc, #38bdf8)", color: "#fff" }}>
                         Разблокировать
                       </button>
                     </div>
                   )}
                 </div>
-              </div>
-            )}
 
-            {codeUnlocked && !isResultsOpen && (
-              <div className="animate-fade-in">
-                <div
-                  className="flex items-center gap-2 mb-6 px-4 py-3 rounded-sm border w-fit"
-                  style={{ borderColor: "rgba(232,16,42,0.3)", background: "rgba(232,16,42,0.08)", color: "var(--av-red)" }}
-                >
-                  <Icon name="Eye" size={16} />
-                  <span className="text-sm font-heading font-semibold">Промежуточные результаты (ваши голоса)</span>
-                </div>
-                <ResultsView votes={votes} />
+                {codeUnlocked && (
+                  <div className="animate-fade-in">
+                    <div className="flex items-center gap-2 mb-5 px-4 py-2.5 rounded-xl w-fit text-sm"
+                      style={{ background: "rgba(192,132,252,0.1)", border: "1px solid rgba(192,132,252,0.25)", color: "#c084fc" }}>
+                      <Icon name="Eye" size={14} />
+                      <span className="font-heading font-semibold">Промежуточные результаты</span>
+                      <button onClick={fetchTotals} className="ml-2 opacity-60 hover:opacity-100 transition-opacity">
+                        <Icon name="RefreshCw" size={12} />
+                      </button>
+                    </div>
+                    {loadingTotals ? <LoadingSpinner /> : <ResultsView globalTotals={globalTotals} />}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -476,38 +497,19 @@ export default function Index() {
         {/* УЧАСТНИКИ */}
         {section === "participants" && (
           <div className="animate-fade-in">
-            <div className="mb-8">
-              <h2 className="font-display font-bold text-3xl uppercase section-line" style={{ color: "var(--av-white)" }}>
-                Участники
-              </h2>
-              <p className="mt-3 text-sm" style={{ color: "var(--av-gray)" }}>8 стран · Финал AuraVision 2026</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <SectionHeader title="Участники" sub="8 стран · Финал AuraVision 2026" />
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {COUNTRIES.map((country, i) => (
-                <div
-                  key={country.id}
-                  className="animate-fade-in flex items-center gap-5 rounded-sm border p-5"
+                <div key={country.id} className="animate-fade-in rounded-2xl p-6 flex flex-col items-center text-center gap-3"
                   style={{
-                    background: "var(--av-card)",
-                    borderColor: "var(--av-border)",
-                    animationDelay: `${i * 0.08}s`,
-                    opacity: 0,
-                    animationFillMode: "forwards",
-                    transition: "border-color 0.2s",
+                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+                    animationDelay: `${i * 0.08}s`, opacity: 0, animationFillMode: "forwards",
+                    transition: "border-color 0.2s, transform 0.2s",
                   }}
-                >
-                  <span style={{ fontSize: 48, lineHeight: 1 }}>{country.flag}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-display font-bold text-xl uppercase" style={{ color: "var(--av-white)" }}>
-                      {country.name}
-                    </div>
-                    <div className="font-heading font-semibold text-base mt-0.5" style={{ color: "var(--av-red)" }}>
-                      {country.artist}
-                    </div>
-                    <div className="text-sm mt-1 truncate" style={{ color: "var(--av-gray)" }}>♪ {country.song}</div>
-                  </div>
-                  <div className="w-1 self-stretch rounded-full flex-shrink-0" style={{ background: country.color, opacity: 0.6 }} />
+                  onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(192,132,252,0.35)"; el.style.transform = "translateY(-3px)"; }}
+                  onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.08)"; el.style.transform = "translateY(0)"; }}>
+                  <span style={{ fontSize: 52, lineHeight: 1 }}>{country.flag}</span>
+                  <div className="font-display font-bold text-xl uppercase euro-text">{country.name}</div>
                 </div>
               ))}
             </div>
@@ -517,39 +519,28 @@ export default function Index() {
         {/* ПРАВИЛА */}
         {section === "rules" && (
           <div className="animate-fade-in max-w-3xl">
-            <div className="mb-8">
-              <h2 className="font-display font-bold text-3xl uppercase section-line" style={{ color: "var(--av-white)" }}>
-                Правила
-              </h2>
-            </div>
-
+            <SectionHeader title="Правила" sub="AuraVision 2026 · Официальное голосование" />
             <div className="space-y-4">
               {[
                 { icon: "Calendar", title: "Период голосования", text: "14 мая 2026 (20:00) — 16 мая 2026 (15:00). Вне этого периода голосование недоступно." },
                 { icon: "Vote", title: "Лимит голосов", text: "Каждый аккаунт может отдать максимум 3 голоса за одну страну. Итого 24 голоса на все 8 стран." },
                 { icon: "Shield", title: "Защита от ботов", text: "Система учитывает исключительно реальные голоса. Голоса от ботов автоматически исключаются." },
-                { icon: "RefreshCw", title: "Обновление данных", text: "Промежуточные результаты обновляются каждые 5 минут с момента старта голосования." },
+                { icon: "RefreshCw", title: "Обновление данных", text: "Суммарные результаты обновляются каждые 5 минут с момента старта голосования." },
                 { icon: "Lock", title: "Конфиденциальность", text: "Результаты засекречены до 18 мая 2026. Промежуточные данные доступны только по специальному коду." },
                 { icon: "Globe", title: "Страны-участницы", text: "В финале участвуют 8 стран: Мальта, Хорватия, Армения, Кипр, Болгария, Албания, Норвегия и Израиль." },
               ].map((rule, i) => (
-                <div
-                  key={i}
-                  className="animate-fade-in flex gap-5 rounded-sm border p-5"
+                <div key={i} className="animate-fade-in flex gap-5 rounded-2xl border p-5"
                   style={{
-                    background: "var(--av-card)",
-                    borderColor: "var(--av-border)",
-                    animationDelay: `${i * 0.09}s`,
-                    opacity: 0,
-                    animationFillMode: "forwards",
-                  }}
-                >
-                  <div className="w-10 h-10 rounded-sm flex items-center justify-center flex-shrink-0"
-                    style={{ background: "rgba(232,16,42,0.1)" }}>
-                    <Icon name={rule.icon} size={18} style={{ color: "var(--av-red)" } as React.CSSProperties} />
+                    background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)",
+                    animationDelay: `${i * 0.09}s`, opacity: 0, animationFillMode: "forwards",
+                  }}>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                    style={{ background: "rgba(192,132,252,0.12)" }}>
+                    <Icon name={rule.icon} size={18} style={{ color: "#c084fc" } as React.CSSProperties} />
                   </div>
                   <div>
-                    <div className="font-heading font-bold text-base mb-1" style={{ color: "var(--av-white)" }}>{rule.title}</div>
-                    <div className="text-sm leading-relaxed" style={{ color: "var(--av-gray)" }}>{rule.text}</div>
+                    <div className="font-heading font-bold text-base mb-1">{rule.title}</div>
+                    <div className="text-sm leading-relaxed" style={{ color: "rgba(255,255,255,0.48)" }}>{rule.text}</div>
                   </div>
                 </div>
               ))}
@@ -559,16 +550,66 @@ export default function Index() {
       </main>
 
       {/* ── FOOTER ── */}
-      <footer className="border-t mt-20" style={{ borderColor: "var(--av-border)" }}>
-        <div className="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="font-display font-bold text-sm uppercase" style={{ color: "var(--av-gray)" }}>
+      <footer className="border-t relative z-10 mt-16" style={{ borderColor: "rgba(192,132,252,0.15)" }}>
+        <div className="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row items-center justify-between gap-3">
+          <div className="font-display font-bold text-sm uppercase euro-text">
             AuraVision 2026 · Официальное голосование
           </div>
-          <div className="text-xs" style={{ color: "var(--av-gray)", opacity: 0.5 }}>
+          <div className="text-xs" style={{ color: "rgba(255,255,255,0.28)" }}>
             14–16 мая 2026 · Итоги открыты с 18 мая
           </div>
         </div>
       </footer>
+
+      <style>{`
+        .euro-text {
+          background: linear-gradient(90deg, #f9a8d4, #c084fc, #818cf8, #38bdf8, #c084fc, #f9a8d4);
+          background-size: 300% auto;
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+          animation: euro-shimmer 4s linear infinite;
+        }
+        .nav-euro { position: relative; }
+        .nav-euro::after {
+          content: '';
+          position: absolute; bottom: -4px; left: 0;
+          width: 0; height: 2px;
+          background: linear-gradient(90deg, #c084fc, #38bdf8);
+          transition: width 0.25s ease; border-radius: 2px;
+        }
+        .nav-euro[data-active="true"]::after { width: 100%; }
+        .nav-euro[data-active="true"] { color: #fff !important; }
+        @keyframes euro-shimmer {
+          0% { background-position: 0% center; }
+          100% { background-position: 300% center; }
+        }
+        @keyframes dot-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.3; transform: scale(0.6); }
+        }
+        @keyframes star-pulse {
+          0%, 100% { opacity: 0.12; }
+          50% { opacity: 0.55; }
+        }
+        @keyframes spin-loader {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes fade-in {
+          from { opacity: 0; transform: translateY(14px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slide-in {
+          from { opacity: 0; transform: translateX(-16px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        .animate-fade-in { animation: fade-in 0.5s ease forwards; }
+        .animate-slide-in { animation: slide-in 0.4s ease forwards; }
+        .animate-fade-in-fast { animation: fade-in 0.2s ease forwards; }
+        .delay-200 { animation-delay: 0.2s; }
+        .delay-300 { animation-delay: 0.3s; }
+        .delay-400 { animation-delay: 0.4s; }
+      `}</style>
     </div>
   );
 }

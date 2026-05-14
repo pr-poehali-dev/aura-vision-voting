@@ -1,0 +1,12 @@
+{
+  "tests": [
+    {
+      "name": "GET votes totals",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": {"totals": {}},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
